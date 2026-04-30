@@ -208,7 +208,7 @@ menu(){
 
   while true; do
     clear
-    echo "==== Universal Quota & Folder Manager v$VERSION ===="
+    echo "==== Universal Quota & Folder Manager v$Authoer ===="
     echo "1) Install tools"
     echo "2) Enable quota on mount"
     echo "3) Set user quota"
@@ -233,7 +233,7 @@ menu(){
       6) btrfs_qgroup ;;
       7) tmpfs_user ;;
       8) friendly_permissions_menu ;;
-      9) show_all ;;
+      9) quota_view_menu ;;
       10) exit 0 ;;
       *) echo "Invalid" ;;
     esac
