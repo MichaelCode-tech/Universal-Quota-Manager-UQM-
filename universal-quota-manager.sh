@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
-# Universal Quota & Folder Manager (Final)
-# Author: MichaelCode-tech (improved UX version)
+# Universal Quota & Folder Manager
+# Author: MichaelCode-tech
 
 set -euo pipefail
 IFS=$'\n\t'
-VERSION="3.1"
 
 require_root(){ [[ $EUID -eq 0 ]] || { echo "Run as root"; exit 1; }; }
 is_cmd(){ command -v "$1" >/dev/null 2>&1; }
@@ -133,71 +132,89 @@ tmpfs_user(){
 }
 
 # =============================
-# 🔐 SMART FOLDER PERMISSIONS
+# SMART FOLDER PERMISSIONS
 # =============================
 friendly_permissions_menu(){
   read -rp "Folder path: " DIR
 
   echo ""
   echo "Choose how this folder should behave:"
-  echo "1) Private (only owner can access)"
-  echo "2) Shared (everyone can read/write)"
-  echo "3) Group shared (only specific group)"
-  echo "4) Group shared + files inherit group"
-  echo "5) Protect files (users can't delete others' files)"
+  echo "1) Private (only owner)"
+  echo "2) Fully shared (everyone)"
+  echo "3) Group only"
+  echo "4) Group shared + inherit"
+  echo "5) Protect files (no delete by others)"
   echo "6) Read-only for others"
-  echo "7) Custom (advanced mode)"
+  echo "7) Custom mode"
   echo ""
 
   read -rp "Choice: " CH
 
   case $CH in
-    1)
-      chmod 700 "$DIR"
-      log "Private folder (owner only)"
-      ;;
-    2)
-      chmod 777 "$DIR"
-      log "Fully shared folder"
-      ;;
+    1) chmod 700 "$DIR" ;;
+    2) chmod 777 "$DIR" ;;
     3)
-      read -rp "Group name: " G
+      read -rp "Group: " G
       chown :"$G" "$DIR"
       chmod 770 "$DIR"
-      log "Group-only access"
       ;;
     4)
-      read -rp "Group name: " G
+      read -rp "Group: " G
       chown :"$G" "$DIR"
       chmod 2775 "$DIR"
-      log "Group shared + inherited group (setgid)"
       ;;
-    5)
-      chmod 1777 "$DIR"
-      log "Sticky mode enabled (like /tmp)"
-      ;;
-    6)
-      chmod 755 "$DIR"
-      log "Others can read but not write"
-      ;;
+    5) chmod 1777 "$DIR" ;;
+    6) chmod 755 "$DIR" ;;
     7)
-      read -rp "Enter numeric mode (e.g. 1755): " MODE
-      chmod "$MODE" "$DIR"
+      read -rp "Mode: " M
+      chmod "$M" "$DIR"
       ;;
-    *)
-      echo "Invalid choice"
-      ;;
+    *) echo "Invalid" ;;
   esac
 }
 
 # =============================
-# SHOW
+# QUOTA VIEWER
 # =============================
-show_all(){
-  M=$(select_mount)
-  repquota "$M" || true
-  xfs_quota -x -c 'report -h' "$M" 2>/dev/null || true
-  btrfs qgroup show "$M" 2>/dev/null || true
+quota_view_menu(){
+
+  echo ""
+  echo "==== Quota Viewer ===="
+  echo "1) User quotas"
+  echo "2) Group quotas"
+  echo "3) Folder quotas (XFS/Btrfs)"
+  echo "4) Partition usage"
+  echo "5) RAM quotas (tmpfs)"
+  echo ""
+
+  read -rp "Choice: " QV
+
+  case $QV in
+    1) repquota -a 2>/dev/null || quota -v ;;
+    2) repquota -g -a 2>/dev/null || true ;;
+    3)
+      M=$(select_mount)
+      xfs_quota -x -c 'report -h' "$M" 2>/dev/null || true
+      btrfs qgroup show -pcre "$M" 2>/dev/null || true
+      ;;
+    4)
+      M=$(select_mount)
+      df -h "$M"
+      quotaon -p "$M" 2>/dev/null || true
+      ;;
+    5)
+      BASE="/var/tmp/user_tmpfs"
+      [[ ! -d "$BASE" ]] && echo "No tmpfs quotas found." && return
+
+      for d in "$BASE"/*; do
+        [[ -d "$d" ]] || continue
+        echo ""
+        echo "User: $(basename "$d")"
+        df -h "$d" | awk 'NR==1 || NR==2'
+      done
+      ;;
+    *) echo "Invalid" ;;
+  esac
 }
 
 # =============================
@@ -208,18 +225,20 @@ menu(){
 
   while true; do
     clear
-    echo "==== Universal Quota & Folder Manager v$Authoer ===="
+    echo "==== Universal Quota & Folder Manager ===="
+    echo "Author: MichaelCode-tech"
+    echo ""
     echo "1) Install tools"
     echo "2) Enable quota on mount"
     echo "3) Set user quota"
     echo "4) Set group quota"
     echo "5) XFS folder quota"
     echo "6) Btrfs folder quota"
-    echo "7) User RAM quota (tmpfs)"
+    echo "7) User RAM quota"
     echo "---- Folder Control ----"
-    echo "8) Smart folder permissions (recommended)"
-    echo "---- Info ----"
-    echo "9) Show quotas"
+    echo "8) Smart folder permissions"
+    echo "---- View ----"
+    echo "9) Quota viewer"
     echo "10) Exit"
 
     read -rp "Choice: " C
