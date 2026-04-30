@@ -1,281 +1,245 @@
 #!/usr/bin/env bash
-# universal-quota-manager.sh
-# Author: MichaelCode-tech
-# Universal Quota Manager: interactive menu for ext*, XFS (xfs_quota), Btrfs qgroup, and FreeBSD basics.
-# MUST BE RUN AS ROOT. Test on non-production before use.
+# Universal Quota & Folder Manager (Final)
+# Author: MichaelCode-tech (improved UX version)
 
 set -euo pipefail
 IFS=$'\n\t'
-VERSION="1.0"
+VERSION="3.1"
 
-QUIET=0
-pause(){ read -rp "Press Enter to continue..."; }
-
+require_root(){ [[ $EUID -eq 0 ]] || { echo "Run as root"; exit 1; }; }
 is_cmd(){ command -v "$1" >/dev/null 2>&1; }
-require_root(){ if [[ $EUID -ne 0 ]]; then echo "Run as root."; exit 1; fi }
+pause(){ read -rp "Press Enter to continue..."; }
+log(){ echo -e "$@"; }
 
-log(){ [[ $QUIET -eq 1 ]] || echo -e "$@"; }
-
-detect_os(){
-  if [[ -f /etc/os-release ]]; then . /etc/os-release; echo "${ID:-linux}"; return; fi
-  if is_cmd uname && [[ "$(uname -s)" == "FreeBSD" ]]; then echo "freebsd"; return; fi
-  echo "unknown"
-}
-
+# =============================
+# INSTALL TOOLS
+# =============================
 install_tools(){
-  # Install quota utilities and filesystem-specific tools if missing
   if is_cmd apt-get; then
-    apt-get update -y
-    apt-get install -y quota xfsprogs btrfs-progs || true
+    apt-get update -y && apt-get install -y quota xfsprogs btrfs-progs
   elif is_cmd dnf; then
-    dnf install -y quota xfsprogs btrfs-progs || true
-  elif is_cmd yum; then
-    yum install -y quota xfsprogs btrfs-progs || true
+    dnf install -y quota xfsprogs btrfs-progs
   elif is_cmd pacman; then
-    pacman -Sy --noconfirm quota xfsprogs btrfs-progs || true
+    pacman -Sy --noconfirm quota xfsprogs btrfs-progs
   elif is_cmd apk; then
-    apk add --no-cache quota xfsprogs btrfs-progs || true
-  elif is_cmd xbps-install; then
-    xbps-install -Sy quota xfsprogs btrfs-progs || true
+    apk add quota xfsprogs btrfs-progs
   else
-    log "Package manager not detected. Please install: quota, xfsprogs, btrfs-progs manually."
+    log "Install quota, xfsprogs, btrfs-progs manually."
   fi
 }
 
-list_mounts(){
-  findmnt -o TARGET,SOURCE,FSTYPE,OPTIONS -rn
-}
-
+# =============================
+# MOUNT SELECTION
+# =============================
 select_mount(){
-  echo "Mounted filesystems:"
-  list_mounts
-  read -rp "Enter mount point (e.g. /, /home): " MOUNT
-  MOUNT=${MOUNT:-/}
-  echo "$MOUNT"
+  findmnt -o TARGET,SOURCE,FSTYPE -rn
+  read -rp "Mount point: " M
+  echo "$M"
 }
 
-enable_quota_ext(){
-  local m=$1
-  log "Enabling user/group quotas on $m (ext) ..."
-  # Remount with usrquota,grpquota
-  if ! mount | grep -q " on $m .*usrquota"; then
-    mount -o remount,usrquota,grpquota "$m" || {
-      log "Remount failed; updating /etc/fstab and remounting."
-      cp /etc/fstab /etc/fstab.bak
-      sed -E -i.bak "/[[:space:]]${m}[[:space:]]/ s/(defaults|[^[:space:]]+)/\\0,usrquota,grpquota/" /etc/fstab || true
-      mount -o remount "$m" || true
-    }
-  fi
-  touch "${m}/aquota.user" "${m}/aquota.group" 2>/dev/null || true
-  chmod 600 "${m}/aquota."* 2>/dev/null || true
-  quotacheck -cum "$m" || quotacheck -avug || true
-  quotaon -v "$m" || quotaon -av || true
-  log "Quotas enabled on $m."
-}
+# =============================
+# ENABLE QUOTAS
+# =============================
+enable_quota(){
+  M=$(select_mount)
+  FST=$(findmnt -n -o FSTYPE --target "$M")
 
-enable_quota_xfs(){
-  local m=$1
-  log "Enabling XFS quotas (project/user/group) on $m ..."
-  mount -o remount,pquota "$m" || mount -o remount,usrquota,grpquota "$m" || true
-  # XFS: ensure xfs_quota available
-  if ! is_cmd xfs_quota; then log "xfs_quota not found; install xfsprogs"; return; fi
-  # create marker files
-  touch "${m}/aquota.user" "${m}/aquota.group" 2>/dev/null || true
-  chmod 600 "${m}/aquota."* 2>/dev/null || true
-  xfs_quota -x -c 'state' "$m" 2>/dev/null || true
-  log "XFS quota state shown above. Use xfs_quota for project quotas."
-}
-
-enable_quota_btrfs(){
-  local m=$1
-  log "Enabling Btrfs quota on $m (enables qgroup tracking)..."
-  if ! is_cmd btrfs; then log "btrfs tool not found; install btrfs-progs"; return; fi
-  btrfs quota enable "$m" || true
-  log "Btrfs qgroups enabled. Use 'btrfs qgroup' to manage."
-}
-
-disable_quota(){
-  local m=$1
-  log "Turning off quotas on $m ..."
-  quotaoff -v "$m" || true
-  if is_cmd xfs_quota; then xfs_quota -x -c 'state' "$m" 2>/dev/null || true; fi
-  if is_cmd btrfs; then btrfs quota disable "$m" 2>/dev/null || true; fi
-  log "Quotas disabled (best-effort)."
-}
-
-set_quota_user(){
-  local m=$1; shift
-  local user=$1; local soft=$2; local hard=$3; local in_soft=${4:-0}; local in_hard=${5:-0}
-  setquota -u "$user" "$soft" "$hard" "$in_soft" "$in_hard" "$m"
-  log "User quota set: $user on $m -> ${soft}/${hard} KB"
-}
-
-set_quota_group(){
-  local m=$1; shift
-  local group=$1; local soft=$2; local hard=$3; local in_soft=${4:-0}; local in_hard=${5:-0}
-  setquota -g "$group" "$soft" "$hard" "$in_soft" "$in_hard" "$m"
-  log "Group quota set: $group on $m -> ${soft}/${hard} KB"
-}
-
-show_quotas(){
-  repquota -a 2>/dev/null || repquota "$1" 2>/dev/null || quota -v || true
-}
-
-remove_quota_entry(){
-  # remove user/group quota entry (set zeros)
-  local m=$1; local type=$2; local name=$3
-  if [[ $type == "user" ]]; then
-    setquota -u "$name" 0 0 0 0 "$m"
-  else
-    setquota -g "$name" 0 0 0 0 "$m"
-  fi
-  log "Quota entry removed (zeros applied) for $name"
-}
-
-xfs_project_add(){
-  local m=$1; local proj=$2; local path=$3; local soft=$4; local hard=$5
-  # Add project id and assign path
-  echo "$proj:$path" >> /etc/projects 2>/dev/null || true
-  echo "$proj:$proj" >> /etc/projid 2>/dev/null || true
-  xfs_quota -x -c "project -s $proj" "$m" || true
-  xfs_quota -x -c "limit -p bhard=$hard bsoft=$soft $proj" "$m" || true
-  log "XFS project quota added: $proj -> $path soft:$soft hard:$hard"
-}
-
-btrfs_qgroup_set(){
-  local m=$1; local qgroup=$2; local quota=$3
-  btrfs qgroup limit "$quota" "$qgroup" "$m" || true
-  log "Btrfs qgroup limit set: $qgroup -> $quota"
-}
-
-menu_install(){
-  echo "Install required tools? (quota, xfsprogs, btrfs-progs)"
-  read -rp "Install now? [y/N]: " ans
-  [[ "$ans" =~ ^[Yy] ]] && install_tools
-  pause
-}
-
-menu_enable(){
-  MOUNT=$(select_mount)
-  FST=$(findmnt -n -o FSTYPE --target "$MOUNT")
-  echo "Filesystem type: $FST"
   case "$FST" in
-    ext*|ext4|ext3|ext2) enable_quota_ext "$MOUNT" ;;
-    xfs) enable_quota_xfs "$MOUNT" ;;
-    btrfs) enable_quota_btrfs "$MOUNT" ;;
-    *) echo "Unsupported filesystem: $FST" ;;
+    ext*)
+      mount -o remount,usrquota,grpquota "$M" || true
+      quotacheck -cum "$M" || true
+      quotaon "$M" || true
+      ;;
+    xfs)
+      mount -o remount,pquota "$M" || true
+      ;;
+    btrfs)
+      btrfs quota enable "$M" || true
+      ;;
+    *)
+      echo "Unsupported FS"
+      ;;
   esac
-  pause
+
+  log "Quota enabled on $M"
 }
 
-menu_disable(){
-  MOUNT=$(select_mount)
-  disable_quota "$MOUNT"
-  pause
+# =============================
+# USER / GROUP QUOTAS
+# =============================
+set_user_quota(){
+  M=$(select_mount)
+  read -rp "User: " U
+  read -rp "Soft KB: " S
+  read -rp "Hard KB: " H
+  setquota -u "$U" "$S" "$H" 0 0 "$M"
 }
 
-menu_set(){
-  MOUNT=$(select_mount)
-  echo "Set quota for: 1) User 2) Group 3) XFS Project 4) Btrfs qgroup"
-  read -rp "Choice: " c
-  case $c in
+set_group_quota(){
+  M=$(select_mount)
+  read -rp "Group: " G
+  read -rp "Soft KB: " S
+  read -rp "Hard KB: " H
+  setquota -g "$G" "$S" "$H" 0 0 "$M"
+}
+
+# =============================
+# XFS FOLDER QUOTA
+# =============================
+xfs_project(){
+  M=$(select_mount)
+  read -rp "Project ID: " ID
+  read -rp "Folder path: " DIR
+  read -rp "Soft KB: " S
+  read -rp "Hard KB: " H
+
+  echo "$ID:$DIR" >> /etc/projects
+  echo "proj$ID:$ID" >> /etc/projid
+
+  xfs_quota -x -c "project -s $ID" "$M"
+  xfs_quota -x -c "limit -p bsoft=${S}k bhard=${H}k proj$ID" "$M"
+
+  log "XFS folder quota applied"
+}
+
+# =============================
+# BTRFS FOLDER QUOTA
+# =============================
+btrfs_qgroup(){
+  M=$(select_mount)
+  read -rp "Path: " DIR
+  read -rp "Qgroup (0/123): " Q
+  read -rp "Limit (e.g. 5G): " L
+
+  btrfs subvolume create "$DIR" || true
+  btrfs qgroup limit "$L" "$Q" "$M"
+}
+
+# =============================
+# TMPFS USER RAM LIMIT
+# =============================
+tmpfs_user(){
+  read -rp "User: " U
+  read -rp "Size (e.g. 1G): " S
+
+  DIR="/var/tmp/user_tmpfs/$U"
+  mkdir -p "$DIR"
+  chown "$U":"$U" "$DIR"
+
+  mount -t tmpfs -o size="$S" tmpfs "$DIR"
+  grep -q "$DIR" /etc/fstab || echo "tmpfs $DIR tmpfs size=$S 0 0" >> /etc/fstab
+
+  log "Tmpfs created for $U"
+}
+
+# =============================
+# 🔐 SMART FOLDER PERMISSIONS
+# =============================
+friendly_permissions_menu(){
+  read -rp "Folder path: " DIR
+
+  echo ""
+  echo "Choose how this folder should behave:"
+  echo "1) Private (only owner can access)"
+  echo "2) Shared (everyone can read/write)"
+  echo "3) Group shared (only specific group)"
+  echo "4) Group shared + files inherit group"
+  echo "5) Protect files (users can't delete others' files)"
+  echo "6) Read-only for others"
+  echo "7) Custom (advanced mode)"
+  echo ""
+
+  read -rp "Choice: " CH
+
+  case $CH in
     1)
-      read -rp "Username: " name
-      read -rp "Soft KB: " soft
-      read -rp "Hard KB: " hard
-      read -rp "Soft inodes (0): " is; is=${is:-0}
-      read -rp "Hard inodes (0): " ih; ih=${ih:-0}
-      set_quota_user "$MOUNT" "$name" "$soft" "$hard" "$is" "$ih"
+      chmod 700 "$DIR"
+      log "Private folder (owner only)"
       ;;
     2)
-      read -rp "Groupname: " name
-      read -rp "Soft KB: " soft
-      read -rp "Hard KB: " hard
-      read -rp "Soft inodes (0): " is; is=${is:-0}
-      read -rp "Hard inodes (0): " ih; ih=${ih:-0}
-      set_quota_group "$MOUNT" "$name" "$soft" "$hard" "$is" "$ih"
+      chmod 777 "$DIR"
+      log "Fully shared folder"
       ;;
     3)
-      read -rp "Project ID (number): " pid
-      read -rp "Path (absolute): " ppath
-      read -rp "Soft KB: " soft
-      read -rp "Hard KB: " hard
-      xfs_project_add "$MOUNT" "$pid" "$ppath" "$soft" "$hard"
+      read -rp "Group name: " G
+      chown :"$G" "$DIR"
+      chmod 770 "$DIR"
+      log "Group-only access"
       ;;
     4)
-      read -rp "qgroup (e.g. 0/1234): " qg
-      read -rp "Quota (e.g. 5G): " ql
-      btrfs_qgroup_set "$MOUNT" "$qg" "$ql"
+      read -rp "Group name: " G
+      chown :"$G" "$DIR"
+      chmod 2775 "$DIR"
+      log "Group shared + inherited group (setgid)"
+      ;;
+    5)
+      chmod 1777 "$DIR"
+      log "Sticky mode enabled (like /tmp)"
+      ;;
+    6)
+      chmod 755 "$DIR"
+      log "Others can read but not write"
+      ;;
+    7)
+      read -rp "Enter numeric mode (e.g. 1755): " MODE
+      chmod "$MODE" "$DIR"
       ;;
     *)
       echo "Invalid choice"
       ;;
   esac
-  pause
 }
 
-menu_show(){
-  MOUNT=$(select_mount)
-  show_quotas "$MOUNT"
-  if is_cmd xfs_quota; then xfs_quota -x -c 'report -h' "$MOUNT" 2>/dev/null || true; fi
-  if is_cmd btrfs; then btrfs qgroup show -pcre "$MOUNT" 2>/dev/null || true; fi
-  pause
+# =============================
+# SHOW
+# =============================
+show_all(){
+  M=$(select_mount)
+  repquota "$M" || true
+  xfs_quota -x -c 'report -h' "$M" 2>/dev/null || true
+  btrfs qgroup show "$M" 2>/dev/null || true
 }
 
-menu_remove(){
-  MOUNT=$(select_mount)
-  echo "Remove quota entry for: 1) User 2) Group"
-  read -rp "Choice: " c
-  case $c in
-    1) read -rp "Username: " name; remove_quota_entry "$MOUNT" user "$name" ;;
-    2) read -rp "Groupname: " name; remove_quota_entry "$MOUNT" group "$name" ;;
-    *) echo "Invalid" ;;
-  esac
-  pause
-}
-
-menu_help(){
-  cat <<EOF
-Universal Quota Manager - v$VERSION
-Author: MichaelCode-tech
-
-Options:
-  Install tools - installs quota, xfsprogs, btrfs-progs where available
-  Enable/Disable quotas - automatically handles ext*, XFS, Btrfs best-effort
-  Set quotas - user, group, XFS project, Btrfs qgroup
-  Show quotas - repquota, xfs_quota report, btrfs qgroup show
-  Remove quota - zero out a user/group quota entry
-EOF
-  pause
-}
-
-main_menu(){
+# =============================
+# MAIN MENU
+# =============================
+menu(){
   require_root
+
   while true; do
     clear
-    echo "==== Universal Quota Manager (Author: MichaelCode-tech) ===="
-    echo "1) Install required tools"
-    echo "2) Enable quotas on mount"
-    echo "3) Disable quotas on mount"
-    echo "4) Set quota (user/group/XFS/Btrfs)"
-    echo "5) Show quotas"
-    echo "6) Remove quota entry"
-    echo "7) Help"
-    echo "8) Exit"
-    read -rp "Choose [1-8]: " choice
-    case $choice in
-      1) menu_install ;;
-      2) menu_enable ;;
-      3) menu_disable ;;
-      4) menu_set ;;
-      5) menu_show ;;
-      6) menu_remove ;;
-      7) menu_help ;;
-      8) echo "Bye."; exit 0 ;;
-      *) echo "Invalid." ; pause ;;
+    echo "==== Universal Quota & Folder Manager v$VERSION ===="
+    echo "1) Install tools"
+    echo "2) Enable quota on mount"
+    echo "3) Set user quota"
+    echo "4) Set group quota"
+    echo "5) XFS folder quota"
+    echo "6) Btrfs folder quota"
+    echo "7) User RAM quota (tmpfs)"
+    echo "---- Folder Control ----"
+    echo "8) Smart folder permissions (recommended)"
+    echo "---- Info ----"
+    echo "9) Show quotas"
+    echo "10) Exit"
+
+    read -rp "Choice: " C
+
+    case $C in
+      1) install_tools ;;
+      2) enable_quota ;;
+      3) set_user_quota ;;
+      4) set_group_quota ;;
+      5) xfs_project ;;
+      6) btrfs_qgroup ;;
+      7) tmpfs_user ;;
+      8) friendly_permissions_menu ;;
+      9) show_all ;;
+      10) exit 0 ;;
+      *) echo "Invalid" ;;
     esac
+
+    pause
   done
 }
 
-main_menu
-
+menu
