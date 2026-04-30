@@ -1,6 +1,4 @@
-**Considering README content and resources**
-
-I need to provide suggestions like "bash quota manager," "xfs_quota tutorial," and "btrfs qgroup guide." After that, I'll focus on creating README content to make sure it’s concise but thorough. Markdown formatting is a must! I’ll also want to call the RelatedSearchTerms tool to enhance the information and see what else might be relevant. It's all about ensuring the user gets the best possible resource in an accessible way!# Universal Quota Manager (UQM)
+Universal Quota Manager (UQM)
 Author: MichaelCode-tech
 
 Universal Quota Manager is a bash-based interactive CLI tool to install quota utilities and manage disk quotas across common filesystems: ext*, XFS (xfs_quota projects), and Btrfs (qgroups). It provides a menu to enable/disable quotas, set and remove user/group quotas, manage XFS projects and Btrfs qgroups, and show current quota information. Intended for Linux distributions (Debian/Ubuntu, Fedora/CentOS, Arch, Alpine, Void) and offers best-effort behavior for FreeBSD.
