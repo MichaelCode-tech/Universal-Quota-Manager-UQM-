@@ -1,132 +1,123 @@
-Universal Quota Manager (UQM)
-Author: MichaelCode-tech
+Universal Quota & Folder Manager (UQFM)  
+Author: MichaelCode-tech  
+Version: 3.1
 
-Universal Quota Manager is a bash-based interactive CLI tool to install quota utilities and manage disk quotas across common filesystems: ext*, XFS (xfs_quota projects), and Btrfs (qgroups). It provides a menu to enable/disable quotas, set and remove user/group quotas, manage XFS projects and Btrfs qgroups, and show current quota information. Intended for Linux distributions (Debian/Ubuntu, Fedora/CentOS, Arch, Alpine, Void) and offers best-effort behavior for FreeBSD.
+A compact, interactive bash utility to enable and manage disk quotas (ext*, XFS, Btrfs), folder permissions and per-user tmpfs (RAM) quotas. Intended for system administrators who want a single menu-driven tool to configure per-user/group quotas, XFS project quotas, Btrfs qgroups, and to apply safe folder permission patterns (including sticky/setgid behavior).
 
-## Features
-- Interactive, menu-driven CLI with clear prompts
-- Install required tools: quota, xfsprogs, btrfs-progs (where supported)
-- Enable/disable quotas for:
-  - ext2/3/4 (usrquota/grpquota)
-  - XFS (pquota and xfs_quota project limits)
-  - Btrfs (qgroup enable/limits)
-- Set quotas:
-  - Per-user and per-group (setquota)
-  - XFS projects (adds /etc/projects and /etc/projid, sets limits with xfs_quota)
-  - Btrfs qgroups (btrfs qgroup limit)
-- Show quotas: repquota, xfs_quota reports, btrfs qgroup show
-- Remove quota entries (zero out user/group quotas)
-- Opinionated defaults for common cases; tools will edit /etc/fstab when needed (backs up /etc/fstab first)
-- Non-destructive guidance and best-effort operations; logs actions and prompts before destructive edits
+Quick highlights
+- Interactive menu for common quota tasks (enable, set, show, remove).
+- XFS project support (manages /etc/projects + /etc/projid and xfs_quota).
+- Btrfs qgroup support (subvolumes + qgroup limits).
+- ext* user/group quotas via setquota/quotacheck/quoton.
+- Per-user tmpfs mounts for RAM-limited temporary directories.
+- “Smart” folder permissions presets: private, shared, group-shared, setgid, sticky, etc.
+- Best-effort package installer for major distros (apt, dnf, pacman, apk).
+- Designed to be safe: backups and non-destructive defaults where possible.
 
-## Requirements
-- Root privileges
-- bash
-- Utilities (script can attempt to install when possible):
-  - quota, setquota, repquota, quotacheck
-  - xfs_quota, xfsprogs (for XFS project support)
-  - btrfs-progs (for Btrfs qgroups)
-- Tested on Linux distros with system package managers: apt, dnf, yum, pacman, apk, xbps (installs are best-effort)
-- FreeBSD support is minimal — prefer native FreeBSD tools for production
+Requirements
+- Root privileges (script will exit if not run as root).
+- bash (script uses bash features).
+- Recommended tools (script can attempt installation): quota (setquota/repquota/quotacheck), xfsprogs (xfs_quota), btrfs-progs (btrfs).
+- Tested on major Linux distros; FreeBSD support is minimal.
 
-## Security & Safety Notes
-- Always run as root (the script will exit otherwise).
-- The script may edit /etc/fstab and create /etc/projects and /etc/projid entries; it creates backups where possible (e.g., /etc/fstab.bak).
-- Test on non-production systems first and back up important files and data.
-- Btrfs qgroup and XFS project management require careful planning; quotas may impact system behavior.
+Security & safety summary
+- Run only on systems you control; test on non-production first.
+- The script may modify:
+  - /etc/fstab (backed up to /etc/fstab.bak when modified)
+  - /etc/projects and /etc/projid (appended for XFS)
+  - aquota.user / aquota.group files on target mounts
+- Back up critical data and configuration before changing quotas.
+- Btrfs qgroups and XFS project quotas can affect applications—plan and test limits carefully.
 
-## Installation
-1. :
+Installation
+1. Clone the repo (example):
    ```
    git clone https://github.com/MichaelCode-tech/Universal-Quota-Manager-UQM-.git
-   cd "Universal-Quota-Manager-UQM"
+   cd Universal-Quota-Manager-UQM
    ```
-2. make it executable:
+2. Make the script executable:
    ```
    chmod +x universal-quota-manager.sh
-
    ```
-3.Run it
-```
+3. Run it as root:
+   ```
    sudo ./universal-quota-manager.sh
-```
-## Usage Overview
-When started, the tool displays a menu with the following options:
-1. Install required tools — attempts to install quota, xfsprogs, btrfs-progs using the host package manager.
-2. Enable quotas on mount — chooses a mount point, detects FS type, and enables suitable quota mechanisms:
-   - ext*: remounts with usrquota,grpquota, creates aquota.user/group, runs quotacheck and quotaon.
-   - XFS: remounts with pquota (or usrquota/grpquota), creates quota markers, runs xfs_quota checks.
-   - Btrfs: enables btrfs quota tracking.
-3. Disable quotas on mount — best-effort to turn off quotas (quotaoff, xfs/btrfs disable).
-4. Set quota — submenu to set:
-   - User/group quotas via setquota (KB/inodes)
-   - XFS project: adds /etc/projects & /etc/projid entries and sets project limits with xfs_quota
-   - Btrfs qgroup: applies qgroup limits
-5. Show quotas — runs repquota, xfs_quota report, and btrfs qgroup show where applicable.
-6. Remove quota entry — zeroes quotas for a user or group (setquota with zeros).
-7. Help — short usage guidance.
-8. Exit
+   ```
 
-Command-line (non-interactive) usage is not the primary mode, but the script contains functions that can be called or adapted for automation.
+Primary features & menu overview
+- Install tools — attempts to install quota, xfsprogs, btrfs-progs with host package manager.
+- Enable quota on mount — detects filesystem type and enables appropriate quota mechanism:
+  - ext*: remounts with usrquota,grpquota; creates quota files; runs quotacheck + quotaon.
+  - XFS: remounts with pquota and prepares xfs_quota usage.
+  - Btrfs: runs btrfs quota enable.
+- Set user/group quota — setquota (soft/hard KB, inode defaults).
+- XFS folder quota — add project mapping to /etc/projects & /etc/projid, set project limits with xfs_quota.
+- Btrfs qgroup — create subvolume (optional) and apply qgroup limits.
+- User RAM quota — per-user tmpfs mount with optional /etc/fstab persistence.
+- Smart folder permissions — presets:
+  - Private (700)
+  - Shared (777)
+  - Group-only (770)
+  - Group shared + inherited group (setgid, 2775)
+  - Sticky (1777, prevents deletion of others’ files)
+  - Read-only for others (755)
+  - Custom numeric mode
+- Show quotas — repquota/xfs_quota/btrfs qgroup show combined output.
 
-## Examples
-- Enable quotas on /home (interactive): choose option 2 and enter /home when prompted.
-- Set a user quota (interactive): choose option 4 → User → provide username and soft/hard KB values.
-- Add an XFS project quota: option 4 → XFS Project → provide project ID, path, soft/hard KB values.
+Examples
+- Enable quotas on /home:
+  - Start script → choose "Enable quota on mount" → enter /home.
+- Create an XFS project quota:
+  - Start script → XFS folder quota → project ID 1775 → folder /srv/projects/projectA → set soft/hard KB.
+- Create a per-user tmpfs of 1G:
+  - Start script → User RAM quota → username → 1G.
+- Make /data shared for a group devs with inherited group:
+  - Start script → Smart folder permissions → choose Group shared + inherit → enter group devs → folder path /data.
 
-## Implementation details
-- The script uses findmnt to detect mountpoint and filesystem type.
-- For ext*:
-  - Adds usrquota,grpquota mount options (remounts or edits /etc/fstab backup).
-  - Creates aquota.user and aquota.group files, runs quotacheck and quotaon.
-- For XFS:
-  - Remounts with pquota where possible and uses xfs_quota for project management.
-  - Adds /etc/projects and /etc/projid entries for mapping project IDs to paths.
-- For Btrfs:
-  - Uses `btrfs quota enable`, `btrfs qgroup limit`, and `btrfs qgroup show`.
-- For FreeBSD:
-  - Minimal support: quotaon/quotaoff and edquota guidance (FreeBSD UFS quotas differ).
+Implementation details (concise)
+- Uses findmnt to discover mounts and filesystem types.
+- Ext*: safe editing/remounting with quota options; creates aquota files and runs quotacheck/quoton.
+- XFS: appends /etc/projects and /etc/projid mappings and calls xfs_quota to apply and report limits; uses chattr +P/xfs_io where needed.
+- Btrfs: can create subvolumes and uses btrfs qgroup limit; requires qgroup planning.
+- Tmpfs: mounts per-user tmpfs under /var/tmp/user_tmpfs/<user> and can add fstab entries for persistence.
 
-## Files touched / created
-- /etc/fstab (backed up to /etc/fstab.bak if modified)
-- /etc/projects and /etc/projid (appended for XFS projects)
-- aquota.user, aquota.group files on target mountpoint
-- Uses system quota tools' metadata within filesystems (quotacheck writes quota metadata)
+Files touched / created
+- /etc/fstab (backed up when modified)
+- /etc/projects and /etc/projid (for XFS)
+- aquota.user, aquota.group on target mounts
+- /var/tmp/user_tmpfs/<user> (tmpfs mounts)
 
-## Limitations
-- Not a replacement for a fully-featured quota management system; intended as a practical admin helper.
-- Btrfs and advanced XFS project workflows are complex; script provides convenience helpers but not complete enterprise workflows (e.g., recursive qgroup assignment strategies).
-- Distribution/package manager behavior varies; install step is best-effort.
-- Non-interactive automation support (CLI flags/subcommands) is not implemented in v1.0 — can be added on request.
+Limitations & caveats
+- Non-interactive CLI/subcommand mode is not implemented; functions can be adapted for automation.
+- Complex enterprise workflows (recursive Btrfs qgroup strategies, cross-subvolume inheritance) are beyond this helper’s scope.
+- Behavior depends on distribution tools and kernel support (e.g., pquota for XFS).
+- XFS project IDs and Btrfs qgroup IDs must be planned to avoid conflicts—script does not centrally track IDs.
 
-## Troubleshooting
-- quotacheck fails: ensure filesystem is mounted and not heavily used; unmount if possible for a full check.
-- setquota command not found: install the quota package for your distribution.
-- xfs_quota errors: ensure xfsprogs is installed and filesystem mounted with project/pquota support.
-- Btrfs qgroup errors: ensure qgroups enabled with `btrfs quota enable <mount>` and that the filesystem supports qgroups.
+Troubleshooting (common issues)
+- quotacheck fails: run on unmounted filesystem if possible or during low I/O; ensure quota tools are installed.
+- setquota not found: install your distro’s quota package.
+- xfs_quota errors: ensure xfsprogs is installed and fs was mounted with project/pquota support.
+- btrfs qgroup errors: enable qgroups first with btrfs quota enable <mount> and ensure subvolume path is inside the mount.
 
-## Best Practices
-- Back up /etc/fstab and critical data before enabling persistent quota options.
-- Use separate mountpoints or subvolumes for data that need quotas (especially for Btrfs).
-- Plan XFS project IDs and Btrfs qgroup numbering/naming ahead to avoid collisions.
-- Monitor quotas regularly (repquota, xfs_quota reports, btrfs qgroup show).
+Best practices
+- Use separate subvolumes or mountpoints for quota-managed datasets when possible.
+- Reserve a clear range for XFS project IDs (e.g., 1000–1999) and document usage.
+- For Btrfs, map qgroups to logical allocations and avoid ad-hoc numbering.
+- Monitor quota reports regularly (repquota, xfs_quota report -h, btrfs qgroup show).
 
-## License
-MIT License — include license file or add a header to the script.
+Changelog (selected)
+- v3.1 — Improved UX, tmpfs per-user, smart folder permissions, consolidated menu.
+- v2.0 — XFS project and Btrfs qgroup helpers, per-user tmpfs, backups for /etc/*.
+- v1.0 — Initial interactive release (quotas for ext*, XFS, Btrfs).
 
-## Changelog
-- v1.0 — Initial interactive release with support for ext*, XFS, Btrfs basics; installation helper; safety backups for /etc/fstab.
+License
+- MIT License — include LICENSE file in repository.
 
-## Contributing
-- Submit issues or patches to the repo. Please include test cases and exact distro/version when reporting distro-specific failures.
-- Suggested improvements: add non-interactive CLI flags, modularize FS-specific handlers, add unit/integration tests, add dry-run mode.
+Contributing
+- Open issues or submit PRs with test details (distro + kernel + tool versions).
+- Suggested enhancements: non-interactive flags, dry-run mode, central ID registry, unit/integration tests.
 
-## Contact / Attribution
+Contact
 Author: MichaelCode-tech
 
 ---
-
-This README covers v1.0 usage, capabilities, limitations, and safety notes. If you want, I can:
-- Add a LICENSE file (MIT),
-- Create a non-interactive CLI mode (flags/subcommands),
-- Produce example automation snippets (Ansible, systemd unit, cron job) for scheduled quota checks.
